@@ -1,0 +1,489 @@
+<meta name='viewport' content='width=device-width, initial-scale=1'/><!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Pro Lens QR Scanner</title>
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+  <style>
+    :root{
+      --primary:#00f2ff;
+      --dark:#121212;
+      --overlay:rgba(0,0,0,0.6);
+    }
+    html,body{
+      margin:0;padding:0;height:100dvh; /* use dynamic viewport */
+      width:100%;
+      background:var(--dark);
+      font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      overflow:hidden;
+      color:#fff;
+    }
+
+    .app-container{
+      position:relative;
+      width:100%;
+      height:100dvh;
+      display:flex;
+      flex-direction:column;
+      background:black;
+    }
+
+    /* Camera feed holder */
+    #reader{
+      position:absolute;inset:0;z-index:1;overflow:hidden;
+    }
+    #reader video{
+      width:100% !important;height:100% !important;object-fit:cover !important;border-radius:0 !important;
+    }
+
+    .hud-layer{
+      position:absolute;inset:0;z-index:10;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between;
+    }
+
+    .top-bar{
+      padding:20px;background:linear-gradient(180deg, rgba(0,0,0,0.8) 0%, transparent 100%);text-align:center;color:white;pointer-events:auto;
+    }
+    .top-bar h2{margin:0;font-size:18px;letter-spacing:2px;text-transform:uppercase;font-weight:700;text-shadow:0 2px 4px rgba(0,0,0,0.5);}
+
+    .scanner-target{flex-grow:1;display:flex;align-items:center;justify-content:center;position:relative;}
+    .scan-box{
+      width:65vw;max-width:300px;aspect-ratio:1/1;border-radius:20px;position:relative;
+      box-shadow:0 0 0 100vmax rgba(0,0,0,0.5);
+      pointer-events:none;
+    }
+    .scan-box::before{
+      content:'';position:absolute;inset:-2px;border:2px solid var(--primary);border-radius:22px;
+      clip-path:polygon(0% 15%,0% 0%,15% 0%,85% 0%,100% 0%,100% 15%,100% 85%,100% 100%,85% 100%,15% 100%,0% 100%,0% 85%);
+      animation:pulse-border 2s infinite ease-in-out;
+    }
+    @keyframes pulse-border{
+      0%{opacity:0.4;box-shadow:0 0 5px var(--primary);}
+      50%{opacity:1;box-shadow:0 0 15px var(--primary);}
+      100%{opacity:0.4;box-shadow:0 0 5px var(--primary);}
+    }
+
+    .controls-area{
+      padding:20px;padding-bottom:max(30px, env(safe-area-inset-bottom));background:linear-gradient(0deg, rgba(0,0,0,0.9) 0%, transparent 100%);display:flex;gap:16px;justify-content:center;pointer-events:auto;
+    }
+    .btn-circle{
+      width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,0.12);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.18);color:white;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform 0.12s; -webkit-tap-highlight-color:transparent;
+    }
+    .btn-circle:active{transform:scale(0.95);background:rgba(255,255,255,0.2);}
+
+    .result-sheet{
+      position:absolute;left:0;bottom:0;width:100%;background:#1a1a1a;border-top-left-radius:24px;border-top-right-radius:24px;padding:20px;box-sizing:border-box;transform:translateY(110%);transition:transform 0.35s cubic-bezier(0.34,1.56,0.64,1);z-index:100;box-shadow:0 -10px 40px rgba(0,0,0,0.5);padding-bottom:max(24px, env(safe-area-inset-bottom));
+    }
+    .result-sheet.active{transform:translateY(0);}
+    .result-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
+    .result-title{color:var(--primary);font-weight:700;font-size:14px;text-transform:uppercase;}
+    .result-content{background:#2a2a2a;padding:12px;border-radius:10px;color:#e0e0e0;font-family:monospace;word-break:break-all;margin-bottom:12px;font-size:14px;line-height:1.4;max-height:160px;overflow:auto;}
+    .sheet-actions{display:flex;gap:12px;}
+    .action-btn{flex:1;padding:12px;border-radius:12px;border:none;font-weight:600;font-size:16px;cursor:pointer;}
+    .btn-cancel{background:#333;color:white;}
+    .btn-go{background:var(--primary);color:#000;}
+
+    .toast{position:absolute;left:50%;top:50%;transform:translate(-50%, -50%);background:rgba(0,0,0,0.82);color:white;padding:10px 18px;border-radius:26px;font-size:14px;pointer-events:none;opacity:0;transition:opacity 0.25s;z-index:200;white-space:nowrap;}
+
+    #reader__dashboard_section_csr, #reader__dashboard_section_swaplink{display:none !important;}
+
+    /* fallback message */
+    .fallback {
+      position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:50;background:linear-gradient(180deg,rgba(0,0,0,0.6),rgba(0,0,0,0.85));padding:20px;box-sizing:border-box;text-align:center;display:none;
+    }
+    .fallback.active{display:flex;}
+    .fallback p{max-width:520px;color:#ddd;line-height:1.5;}
+    .hidden{display:none !important;}
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <div id="reader"></div>
+
+    <div class="hud-layer">
+      <div class="top-bar">
+        <h2>Lens Scanner</h2>
+      </div>
+
+      <div class="scanner-target">
+        <div class="scan-box" id="scan-box" aria-hidden="true"></div>
+      </div>
+
+      <div class="controls-area" role="toolbar" aria-label="Scanner controls">
+        <button class="btn-circle" id="switch-cam-btn" title="Switch Camera" aria-label="Switch camera">
+          <!-- svg -->
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"></path><circle cx="12" cy="13" r="3"></circle></svg>
+        </button>
+
+        <button class="btn-circle hidden" id="torch-btn" title="Toggle Flashlight" aria-label="Toggle flashlight">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2l2 4-2 4a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l-2-4 2-4"></path></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="result-sheet" id="result-sheet" role="dialog" aria-modal="true" aria-hidden="true">
+      <div class="result-header">
+        <span class="result-title">Code Found</span>
+      </div>
+      <div class="result-content" id="scan-result-text">Loading...</div>
+      <div class="sheet-actions">
+        <button class="action-btn btn-cancel" id="close-btn">Close</button>
+        <button class="action-btn btn-go" id="open-btn">Open</button>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" aria-hidden="true"></div>
+
+    <div class="fallback" id="fallback">
+      <p id="fallback-text">We couldn't access the camera. Make sure you've granted camera access and that this page is served using HTTPS. If you're on mobile, open this page from the system browser and allow camera permissions in the prompt.</p>
+    </div>
+
+  </div>
+
+  <script>
+    // ====== Core variables ======
+    const html5QrCode = new Html5Qrcode("reader");
+    let cameras = [];
+    let currentCameraIndex = 0;
+    let isScanning = false;
+    let lastCameraId = null;
+    let toastTimeout = null;
+    let torchSupported = false;
+    let torchOn = false;
+    let imageCapture = null; // for torch
+
+    // UI refs
+    const resultSheet = document.getElementById('result-sheet');
+    const resultText = document.getElementById('scan-result-text');
+    const toast = document.getElementById('toast');
+    const fallback = document.getElementById('fallback');
+    const switchBtn = document.getElementById('switch-cam-btn');
+    const torchBtn = document.getElementById('torch-btn');
+    const scanBox = document.getElementById('scan-box');
+    const closeBtn = document.getElementById('close-btn');
+    const openBtn = document.getElementById('open-btn');
+
+    // Helper: show toast (prevents stacking)
+    function showToast(msg, duration = 2200) {
+      if (toastTimeout) clearTimeout(toastTimeout);
+      toast.textContent = msg;
+      toast.style.opacity = 1;
+      toast.setAttribute('aria-hidden','false');
+      toastTimeout = setTimeout(() => {
+        toast.style.opacity = 0;
+        toast.setAttribute('aria-hidden','true');
+        toastTimeout = null;
+      }, duration);
+    }
+
+    // Normalize and validate URL to prevent 'javascript:' or data URI attacks
+    function normalizeOpenUrl(input) {
+      const trimmed = input.trim();
+      // quick blocklist for dangerous schemes
+      const lower = trimmed.toLowerCase();
+      if (lower.startsWith('javascript:') || lower.startsWith('data:') || lower.startsWith('blob:')) {
+        return null;
+      }
+      try {
+        // If user gave a full URL with scheme
+        const u = new URL(trimmed);
+        return u.href;
+      } catch (e) {
+        // No scheme - try adding https
+        try {
+          const u2 = new URL('https://' + trimmed);
+          return u2.href;
+        } catch (e2) {
+          return null;
+        }
+      }
+    }
+
+    // Attempt to open a url safely
+    function openNormalizedUrl(text) {
+      const url = normalizeOpenUrl(text);
+      if (!url) {
+        // perform a web search instead
+        window.open('https://www.google.com/search?q=' + encodeURIComponent(text), '_self');
+        return;
+      }
+      // Use rel="noopener" behavior by opening in same origin or _self
+      window.location.href = url;
+    }
+
+    // ====== Measure scan box and build qrbox config ======
+    function buildQrbox() {
+      const rect = scanBox.getBoundingClientRect();
+      // Use 80% of the smaller axis to avoid edges
+      const size = Math.floor(Math.min(rect.width, rect.height) * 0.8);
+      // html5-qrcode expects either a number or {width,height}
+      return { width: size, height: size };
+    }
+
+    // ====== Camera selection heuristics ======
+    function pickBestCamera(devices) {
+      if (!devices || !devices.length) return null;
+      // prefer label containing back/rear/environment
+      const prioritized = devices.slice().sort((a,b)=>{
+        const la = (a.label || '').toLowerCase();
+        const lb = (b.label || '').toLowerCase();
+        const score = (s => (s.includes('back')||s.includes('rear')||s.includes('environment')||s.includes('rear camera')) ? 1 : 0);
+        return score(lb) - score(la); // put better at front
+      });
+      return prioritized[0];
+    }
+
+    // ====== Start scanning with fallback handling for pause/resume ======
+    async function startScanning(cameraId) {
+      if (!cameraId) {
+        showToast('No camera selected');
+        return;
+      }
+      const qrbox = buildQrbox();
+      const config = {
+        fps: 10,
+        qrbox,
+        // rely mostly on videoConstraints to get better results on ultra-wide/back cams
+        videoConstraints: {
+          deviceId: { exact: cameraId },
+          width: { min: 640, ideal: 1280, max: 1920 },
+          height: { min: 480, ideal: 720, max: 1080 },
+          facingMode: 'environment'
+        }
+      };
+
+      try {
+        // If scanning already, stop first
+        if (isScanning) {
+          if (typeof html5QrCode.pause === 'function') {
+            html5QrCode.pause();
+            isScanning = false;
+          } else {
+            await html5QrCode.stop();
+            isScanning = false;
+          }
+        }
+
+        lastCameraId = cameraId;
+        await html5QrCode.start(cameraId, config, onScanSuccess, onScanFailure);
+        isScanning = true;
+        showToast('Scanning...');
+        fixVideoLayoutAndTorch();
+      } catch (err) {
+        console.error('Could not start camera', err);
+        showToast('Could not start camera');
+      }
+    }
+
+    function fixVideoLayoutAndTorch() {
+      const v = document.querySelector('#reader video');
+      if (v) {
+        v.style.width = '100%';
+        v.style.height = '100%';
+        v.style.objectFit = 'cover';
+        // Try to setup ImageCapture for torch if possible
+        try {
+          const track = v.srcObject && v.srcObject.getVideoTracks && v.srcObject.getVideoTracks()[0];
+          if (track) {
+            // feature-detect for ImageCapture + capabilities.torch
+            // This may throw in some browsers; wrap in try/catch
+            const ic = window.ImageCapture ? new ImageCapture(track) : null;
+            if (ic && typeof ic.getPhotoCapabilities === 'function') {
+              ic.getPhotoCapabilities().then(caps => {
+                if (caps.torch || (caps.fillLightMode && caps.fillLightMode.length)) {
+                  torchSupported = true;
+                  imageCapture = ic;
+                  torchBtn.classList.remove('hidden');
+                } else {
+                  torchSupported = false;
+                  imageCapture = null;
+                }
+              }).catch(_=>{
+                torchSupported = false;
+                imageCapture = null;
+              });
+            }
+          }
+        } catch (e) {
+          // ignore
+          torchSupported = false;
+          imageCapture = null;
+        }
+      }
+    }
+
+    // Toggle torch if possible
+    async function toggleTorch() {
+      if (!imageCapture || !torchSupported) {
+        showToast('Torch not supported on this device');
+        return;
+      }
+      try {
+        // Try setOptions on the track (browser dependent)
+        const track = document.querySelector('#reader video')?.srcObject?.getVideoTracks?.()[0];
+        if (!track) return showToast('Torch not available');
+
+        if (typeof track.applyConstraints === 'function') {
+          await track.applyConstraints({ advanced: [{ torch: !torchOn }] });
+          torchOn = !torchOn;
+          torchBtn.style.background = torchOn ? 'rgba(255,255,255,0.28)' : '';
+        } else {
+          showToast('Torch toggle unsupported');
+        }
+      } catch (e) {
+        console.warn('Torch toggle error', e);
+        showToast('Unable to toggle torch');
+      }
+    }
+
+    // Called when a QR code is successfully read
+    function onScanSuccess(decodedText, decodedResult) {
+      // prevent multiple triggers
+      if (resultSheet.classList.contains('active')) return;
+
+      // small vibration if available
+      if (navigator.vibrate) navigator.vibrate(70);
+
+      // Pause or stop scanning depending on api
+      if (typeof html5QrCode.pause === 'function') {
+        try { html5QrCode.pause(); } catch(e){ /* swallow */ }
+      } else if (typeof html5QrCode.stop === 'function') {
+        html5QrCode.stop().catch(()=>{/* swallow */});
+      }
+
+      resultText.innerText = decodedText;
+      resultSheet.classList.add('active');
+      resultSheet.setAttribute('aria-hidden','false');
+      // accessibility: focus the result sheet
+      resultSheet.tabIndex = -1;
+      resultSheet.focus();
+    }
+
+    function onScanFailure(error) {
+      // intentionally no-op to avoid spamming logs; you can add debugging console statements here
+    }
+
+    // Resume scanning when closing result
+    async function resetScanner() {
+      resultSheet.classList.remove('active');
+      resultSheet.setAttribute('aria-hidden','true');
+      // restore focus to switch camera button
+      switchBtn.focus();
+
+      // resume or restart camera
+      try {
+        if (typeof html5QrCode.resume === 'function') {
+          html5QrCode.resume();
+          isScanning = true;
+        } else if (lastCameraId) {
+          // restart using last camera
+          await startScanning(lastCameraId);
+        }
+      } catch (e) {
+        console.error('Error resuming scanner', e);
+      }
+    }
+
+    // Safe open - use normalizeOpenUrl to avoid dangerous schemes
+    function openLink() {
+      const text = resultText.innerText || '';
+      openNormalizedUrl(text);
+    }
+
+    // Cycle to next camera
+    async function cycleCamera() {
+      if (!cameras || cameras.length <= 1) {
+        showToast('Only 1 Camera Found');
+        return;
+      }
+      // attempt stop first
+      try {
+        if (typeof html5QrCode.stop === 'function') {
+          await html5QrCode.stop();
+          isScanning = false;
+        } else if (typeof html5QrCode.pause === 'function') {
+          html5QrCode.pause();
+          isScanning = false;
+        }
+      } catch (e) { /* ignore */ }
+
+      currentCameraIndex = (currentCameraIndex + 1) % cameras.length;
+      const camLabel = cameras[currentCameraIndex].label || `Camera ${currentCameraIndex + 1}`;
+      const cleanLabel = camLabel.toLowerCase().includes('back') ? 'Back Lens' :
+                         camLabel.toLowerCase().includes('front') ? 'Front Lens' : `Lens ${currentCameraIndex + 1}`;
+      showToast(`Switched to: ${cleanLabel}`);
+      await startScanning(cameras[currentCameraIndex].id);
+    }
+
+    // ====== Setup on load ======
+    window.addEventListener('load', async () => {
+      try {
+        // Request permission proactively so labels are available
+        await navigator.mediaDevices.getUserMedia({ video: true });
+
+        // Use Html5Qrcode helper to get cameras, but also fallback to enumerateDevices
+        let devices = [];
+        try {
+          devices = await Html5Qrcode.getCameras();
+        } catch (e) {
+          // fallback
+          const list = await navigator.mediaDevices.enumerateDevices();
+          devices = list.filter(d => d.kind === 'videoinput').map((d, i) => ({ id: d.deviceId, label: d.label || `Camera ${i+1}` }));
+        }
+
+        if (devices && devices.length) {
+          cameras = devices;
+          // pick best camera (prefer back)
+          const best = pickBestCamera(cameras) || cameras[0];
+          currentCameraIndex = cameras.findIndex(c => c.id === best.id);
+          if (currentCameraIndex < 0) currentCameraIndex = 0;
+          await startScanning(cameras[currentCameraIndex].id);
+        } else {
+          fallback.classList.add('active');
+          showToast('No cameras found');
+        }
+      } catch (err) {
+        console.error('Camera permission error:', err);
+        // Show fallback with guidance
+        fallback.classList.add('active');
+        document.getElementById('fallback-text').innerText = 'Camera access blocked. Please allow camera permissions in your browser settings and make sure this page is served via HTTPS.';
+      }
+    });
+
+    // Accessibility: close on ESC
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && resultSheet.classList.contains('active')) {
+        resetScanner();
+      }
+    });
+
+    // Wire up UI
+    switchBtn.addEventListener('click', cycleCamera);
+    closeBtn.addEventListener('click', resetScanner);
+    openBtn.addEventListener('click', openLink);
+    torchBtn.addEventListener('click', toggleTorch);
+
+    // make scan-box recompute qrbox on resize/orientation change
+    let resizeTimer = null;
+    window.addEventListener('resize', () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        // if scanning, restart with new qrbox size (keeps scanning smoother)
+        if (isScanning && lastCameraId) {
+          startScanning(lastCameraId);
+        }
+      }, 300);
+    });
+
+    // Tear down on page unload
+    window.addEventListener('beforeunload', async () => {
+      try {
+        if (typeof html5QrCode.stop === 'function') {
+          await html5QrCode.stop();
+        }
+      } catch(e){}
+    });
+
+  </script>
+</body>
+</html>
